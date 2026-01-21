@@ -1,3 +1,5 @@
+use os_info::Type;
+
 // Precompiled binaries for OR-TOOLS
 const DEBIAN_12_BINARIES: &str = "https://github.com/google/or-tools/releases/download/v9.14/or-tools_amd64_debian-12_cpp_v9.14.6206.tar.gz";
 const ARCH_BINARIES: &str = "https://github.com/google/or-tools/releases/download/v9.14/or-tools_amd64_archlinux_cpp_v9.14.6206.tar.gz";
@@ -10,12 +12,15 @@ macro_rules! warn_print {
     }
 }
 
-fn download_and_extract_binaries(outpath: std::path::PathBuf) -> anyhow::Result<()> {
-    let prebuilt_binaries_link = match os_info::get().os_type() {
+fn download_and_extract_binaries(
+    platform: Type,
+    outpath: std::path::PathBuf,
+) -> anyhow::Result<()> {
+    let prebuilt_binaries_link = match platform {
         // Arch and "derivative" distros
-        os_info::Type::Arch | os_info::Type::Manjaro | os_info::Type::EndeavourOS => ARCH_BINARIES,
-        os_info::Type::Debian | os_info::Type::Linux => DEBIAN_12_BINARIES,
-        os_info::Type::Macos => MACOS_ARM_BINARIES,
+        Type::Arch | Type::Manjaro | Type::EndeavourOS => ARCH_BINARIES,
+        Type::Debian | Type::Linux => DEBIAN_12_BINARIES,
+        Type::Macos => MACOS_ARM_BINARIES,
         other => unimplemented!("support for {other} operating system is not implemented"),
     };
 
@@ -57,10 +62,22 @@ fn main() -> anyhow::Result<()> {
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR")?);
     let lib_dir = out_dir.join("ortools");
     warn_print!("installing ortools lib in {lib_dir:?}");
+    let platform = os_info::get().os_type();
 
+    if platform == os_info::Type::Macos {
+        // dynamic linking with the OUT_DIR path of the library does not work for some reason
+        // on MacOS, when `cp_sat` is used as a dependency. In this case we rely on system
+        // libraries of protobuf & or-tools
+        let libortools = "/opt/homebrew/lib/libortools.9.dylib";
+        if !std::fs::exists(libortools)? {
+            println!("cargo::error=Could not find required `{libortools}`. Did you `brew install or-tools`?");
+            return Ok(());
+        }
+        // No error, `cp_sat` should work with system dependencies
+    }
     // Add the precompiled binaries to the OUT_DIR for linking against C++ wrapper.
     if !lib_dir.exists() {
-        download_and_extract_binaries(lib_dir.clone())?;
+        download_and_extract_binaries(platform, lib_dir.clone())?;
     }
 
     if std::env::var("DOCS_RS").is_err() {
@@ -74,7 +91,10 @@ fn main() -> anyhow::Result<()> {
 
         println!("cargo:rustc-link-lib=ortools");
         println!("cargo:rustc-link-lib=protobuf");
-        println!("cargo:rustc-link-search={}/lib", lib_dir_str);
+        match platform {
+            os_info::Type::Macos => println!("cargo:rustc-link-search=/opt/homebrew/lib"),
+            _other => println!("cargo:rustc-link-search={}/lib", lib_dir_str),
+        }
     }
     Ok(())
 }
