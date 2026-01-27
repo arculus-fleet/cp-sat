@@ -1,100 +1,128 @@
-use os_info::Type;
+use anyhow::{anyhow, bail, Context};
+use std::path::{Path, PathBuf};
 
-// Precompiled binaries for OR-TOOLS
-const DEBIAN_12_BINARIES: &str = "https://github.com/google/or-tools/releases/download/v9.14/or-tools_amd64_debian-12_cpp_v9.14.6206.tar.gz";
-const ARCH_BINARIES: &str = "https://github.com/google/or-tools/releases/download/v9.14/or-tools_amd64_archlinux_cpp_v9.14.6206.tar.gz";
-const MACOS_ARM_BINARIES: &str = "https://github.com/google/or-tools/releases/download/v9.14/or-tools_arm64_macOS-15.5_cpp_v9.14.6206.tar.gz";
-
-/// Helper for printing during build.
-macro_rules! warn_print {
-    ($($tokens: tt)*) => {
-        println!("cargo::warning={}", format!($($tokens)*))
+fn find_or_tools_homebrew() -> anyhow::Result<Option<PathBuf>> {
+    const OR_TOOLS_HOMEBREW_DIR: &str = "/opt/homebrew/opt/or-tools";
+    const OR_TOOLS_HOMEBREW_INCLUDE_DIR: &str = "/opt/homebrew/include";
+    if std::fs::exists(OR_TOOLS_HOMEBREW_DIR)
+        .context("Failed to check if homebrew libortools directory exists")?
+    {
+        return Ok(Some(PathBuf::from(OR_TOOLS_HOMEBREW_INCLUDE_DIR)));
     }
+
+    Ok(None)
 }
 
-fn download_and_extract_binaries(
-    platform: Type,
-    outpath: std::path::PathBuf,
-) -> anyhow::Result<()> {
-    let prebuilt_binaries_link = match platform {
-        // Arch and "derivative" distros
-        Type::Arch | Type::Manjaro | Type::EndeavourOS => ARCH_BINARIES,
-        Type::Debian | Type::Linux => DEBIAN_12_BINARIES,
-        Type::Macos => MACOS_ARM_BINARIES,
-        other => unimplemented!("support for {other} operating system is not implemented"),
+fn find_or_tools_linux() -> anyhow::Result<Option<PathBuf>> {
+    // Since OR Tools does not provide a pkg-config integration, we are left finding it manually
+    // using heuristics. OR Tools has the lib inside the lib64 directory.
+    const OR_TOOLS_LIB_PATHS: [&str; 6] = [
+        "/usr/local/lib64/libortools.so",
+        "/usr/local/lib/libortools.so",
+        "/usr/lib64/libortools.so",
+        "/usr/lib/libortools.so",
+        "/lib/libortools.so",
+        "/lib64/libortools.so",
+    ];
+
+    let mut lib_found = false;
+    for path in OR_TOOLS_LIB_PATHS.iter() {
+        if std::fs::exists(path).context("Failed to check if libortools exists")? {
+            println!("cargo:rustc-link-search=native={path}");
+            lib_found = true;
+            break;
+        }
+    }
+
+    if !lib_found {
+        return Ok(None);
+    }
+
+    const INCLUDE_PATHS: [&str; 2] = ["/usr/local/include", "/usr/include"];
+    for path in INCLUDE_PATHS.iter() {
+        if std::fs::exists(Path::new(path).join("ortools"))
+            .context("Failed to check if include dir exists")?
+        {
+            return Ok(Some(PathBuf::from(path)));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Finds the OR Tools library directory, adds it to the linker search path, and returns the include
+/// directory.
+fn find_or_tools(target: &str) -> anyhow::Result<PathBuf> {
+    let custom_lib_dir = if let Some(lib_dir) = std::env::var("OR_TOOLS_LIB_DIR").ok() {
+        println!("cargo:rustc-link-search=native={lib_dir}");
+        true
+    } else {
+        false
     };
+    let custom_include_dir = std::env::var("OR_TOOLS_INCLUDE_DIR").ok();
 
-    // Download the binaries
-    let mut body = reqwest::blocking::get(prebuilt_binaries_link)?;
-    let work_dir = std::path::PathBuf::from(std::env::var("OUT_DIR")?);
-    let tar_path = work_dir.join("ortools.tar.gz");
-    let mut tar_gz_file = std::fs::File::create(&tar_path)?;
-    std::io::copy(&mut body, &mut tar_gz_file)?;
+    // In case both the include dir and the lib dir are already set, we don't need to do anything.
+    if custom_lib_dir && custom_include_dir.is_some() {
+        return Ok(PathBuf::from(
+            custom_include_dir.expect("include dir should be set"),
+        ));
+    }
 
-    // Extract the archive
-    let decoder = flate2::read::GzDecoder::new(std::fs::File::open(&tar_path)?);
-    let mut archive = tar::Archive::new(decoder);
-    archive.unpack(&work_dir)?;
-    std::fs::remove_file(&tar_path)?;
+    if target.ends_with("-apple-darwin") {
+        match target {
+            "aarch64-apple-darwin" => {
+                if let Some(include_dir) = find_or_tools_homebrew()
+                    .context("Failed to check if homebrew libortools directory exists")?
+                {
+                    return Ok(include_dir);
+                }
+            }
+            _ => bail!("Unsupported Apple platform: {}", target),
+        }
 
-    // Rename extraction dir to a consistent name across different platforms.
-    let extraction_dir_regex = regex::Regex::new(r"or.*?tools.*?9\.14").unwrap();
-    let extracted_dir = std::fs::read_dir(&work_dir)?
-        .filter_map(|entry| entry.ok())
-        .find_map(|entry| {
-            (entry.path().is_dir()
-                && extraction_dir_regex
-                    .is_match(entry.path().to_str().expect("should be valid unicode")))
-            .then_some(entry.path())
-        })
-        .ok_or(anyhow::anyhow!("cannot find extracted libs"))?;
-    std::fs::rename(&extracted_dir, &outpath)?;
-    Ok(())
+        println!("cargo::error=Could not find `libortools` library. Run `brew install or-tools` or provide the `OR_TOOLS_LIB_DIR` env var.");
+        bail!("Could not find `libortools` library");
+    }
+
+    if target.contains("unknown-linux-gnu") {
+        if let Some(include_path) =
+            find_or_tools_linux().context("Failed to check if libortools exists on Linux target")?
+        {
+            return Ok(include_path);
+        }
+
+        println!("cargo::error=Could not find `libortools` library. If not installed in a standard location provide the `OR_TOOLS_LIB_DIR` env var.");
+        bail!("Could not find `libortools` library");
+    }
+
+    println!("cargo::error=Unsupported platform: {}. Alternatively provide the `OR_TOOLS_LIB_DIR` env variable.", target);
+    Err(anyhow!("Unsupported platform: {}", target))
 }
 
 fn main() -> anyhow::Result<()> {
+    let target = std::env::var("TARGET").expect("TARGET env var is not set");
+    let host = std::env::var("HOST").expect("HOST env var is not set");
+    if target != host {
+        println!("cargo::error=Cross-compilation is currently not supported.?");
+        bail!("Cross-compilation is not supported")
+    }
+
     prost_build::compile_protos(
         &["src/cp_model.proto", "src/sat_parameters.proto"],
         &["src/"],
     )
-    .unwrap();
+    .context("Failed to compile proto files")?;
 
-    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR")?);
-    let lib_dir = out_dir.join("ortools");
-    warn_print!("installing ortools lib in {lib_dir:?}");
-    let platform = os_info::get().os_type();
-
-    if platform == os_info::Type::Macos {
-        // dynamic linking with the OUT_DIR path of the library does not work for some reason
-        // on MacOS, when `cp_sat` is used as a dependency. In this case we rely on system
-        // libraries of protobuf & or-tools
-        let libortools = "/opt/homebrew/lib/libortools.9.dylib";
-        if !std::fs::exists(libortools)? {
-            println!("cargo::error=Could not find required `{libortools}`. Did you `brew install or-tools`?");
-            return Ok(());
-        }
-        // No error, `cp_sat` should work with system dependencies
-    }
-    // Add the precompiled binaries to the OUT_DIR for linking against C++ wrapper.
-    if !lib_dir.exists() {
-        download_and_extract_binaries(platform, lib_dir.clone())?;
-    }
+    let include_dir = find_or_tools(&target)?;
 
     if std::env::var("DOCS_RS").is_err() {
-        let lib_dir_str = lib_dir.to_str().expect("path should be a valid str");
         cc::Build::new()
             .cpp(true)
             .flags(["-std=c++17", "-DOR_PROTO_DLL="])
             .file("src/cp_sat_wrapper.cpp")
-            .include([lib_dir_str, "/include"].concat())
+            .include(&include_dir)
             .compile("cp_sat_wrapper.a");
-
-        println!("cargo:rustc-link-lib=ortools");
-        println!("cargo:rustc-link-lib=protobuf");
-        match platform {
-            os_info::Type::Macos => println!("cargo:rustc-link-search=/opt/homebrew/lib"),
-            _other => println!("cargo:rustc-link-search={}/lib", lib_dir_str),
-        }
     }
+
     Ok(())
 }
