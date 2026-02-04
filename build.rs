@@ -124,5 +124,8 @@ fn main() -> anyhow::Result<()> {
             .compile("cp_sat_wrapper.a");
     }
 
+    println!("cargo:rustc-link-lib=ortools");
+    println!("cargo:rustc-link-lib=protobuf");
+
     Ok(())
 }
