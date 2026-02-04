@@ -17,17 +17,18 @@ fn find_or_tools_linux() -> anyhow::Result<Option<PathBuf>> {
     // Since OR Tools does not provide a pkg-config integration, we are left finding it manually
     // using heuristics. OR Tools has the lib inside the lib64 directory.
     const OR_TOOLS_LIB_PATHS: [&str; 6] = [
-        "/usr/local/lib64/libortools.so",
-        "/usr/local/lib/libortools.so",
-        "/usr/lib64/libortools.so",
-        "/usr/lib/libortools.so",
-        "/lib/libortools.so",
-        "/lib64/libortools.so",
+        "/usr/local/lib64",
+        "/usr/local/lib",
+        "/usr/lib64",
+        "/usr/lib",
+        "/lib",
+        "/lib64",
     ];
 
     let mut lib_found = false;
     for path in OR_TOOLS_LIB_PATHS.iter() {
-        if std::fs::exists(path).context("Failed to check if libortools exists")? {
+        let lib_path = Path::new(path).join("libortools.so");
+        if std::fs::exists(lib_path).context("Failed to check if libortools exists")? {
             println!("cargo:rustc-link-search=native={path}");
             lib_found = true;
             break;
