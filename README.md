@@ -6,7 +6,14 @@ Rust bindings to the Google CP-SAT constraint programming solver.
 
 ## Prerequisites
 - A C++ compiler (e.g. clang)
-- protobuf compiler + libprotobuf
+- [ortools](https://github.com/google/or-tools) v9.14 and its dependencies
 
-Invoke Cargo using `RUSTFLAGS='-Clink-arg=-lprotobuf' cargo <command>`.
-The environment variable `ORTOOLS_PREFIX` is used to find include files and library files. If not setted, `/opt/ortools` will be added to the search path (classical search path will also be used).
+The crate will search for the ortools library in default locations for your platform. If you installed ortools in a
+custom location, set the `OR_TOOLS_LIB_DIR` and `OR_TOOLS_INCLUDE_DIR` environment variables.
+
+## Limitations
+
+If protobuf is not installed in a default location for your system, you will need to manually set the correct flag for
+`rustc` to find it.
+
+Only Linux and macOS are supported.
