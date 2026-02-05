@@ -2,12 +2,17 @@ use anyhow::{anyhow, bail, Context};
 use std::path::{Path, PathBuf};
 
 fn find_or_tools_homebrew() -> anyhow::Result<Option<PathBuf>> {
-    const OR_TOOLS_HOMEBREW_DIR: &str = "/opt/homebrew/opt/or-tools";
+    const OR_TOOLS_HOMEBREW_DIR: [&str; 2] = [
+        "/opt/homebrew/opt/or-tools",
+        "/opt/homebrew/opt/or-tools@9.14",
+    ];
     const OR_TOOLS_HOMEBREW_INCLUDE_DIR: &str = "/opt/homebrew/include";
-    if std::fs::exists(OR_TOOLS_HOMEBREW_DIR)
-        .context("Failed to check if homebrew libortools directory exists")?
-    {
-        return Ok(Some(PathBuf::from(OR_TOOLS_HOMEBREW_INCLUDE_DIR)));
+    for path in OR_TOOLS_HOMEBREW_DIR.iter() {
+        if std::fs::exists(path)
+            .context("Failed to check if homebrew libortools directory exists")?
+        {
+            return Ok(Some(PathBuf::from(OR_TOOLS_HOMEBREW_INCLUDE_DIR)));
+        }
     }
 
     Ok(None)
@@ -124,6 +129,7 @@ fn main() -> anyhow::Result<()> {
     let include_dir = find_or_tools(&target)?;
 
     if std::env::var("DOCS_RS").is_err() {
+        println!("cargo:rerun-if-changed=src/cp_sat_wrapper.cpp");
         cc::Build::new()
             .cpp(true)
             .flags(["-std=c++17", "-DOR_PROTO_DLL="])
