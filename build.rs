@@ -54,6 +54,7 @@ fn find_or_tools_linux() -> anyhow::Result<Option<PathBuf>> {
 /// Finds the OR Tools library directory, adds it to the linker search path, and returns the include
 /// directory.
 fn find_or_tools(target: &str) -> anyhow::Result<PathBuf> {
+    println!("cargo:rerun-if-env-changed=OR_TOOLS_LIB_DIR");
     let custom_lib_dir = if let Some(lib_dir) = std::env::var("OR_TOOLS_LIB_DIR").ok() {
         println!("cargo:rustc-link-search=native={lib_dir}");
         true
