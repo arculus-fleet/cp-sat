@@ -55,6 +55,7 @@ fn find_or_tools_linux() -> anyhow::Result<Option<PathBuf>> {
 /// directory.
 fn find_or_tools(target: &str) -> anyhow::Result<PathBuf> {
     println!("cargo:rerun-if-env-changed=OR_TOOLS_LIB_DIR");
+    println!("cargo:rerun-if-env-changed=OR_TOOLS_INCLUDE_DIR");
     let custom_lib_dir = if let Some(lib_dir) = std::env::var("OR_TOOLS_LIB_DIR").ok() {
         println!("cargo:rustc-link-search=native={lib_dir}");
         true
@@ -68,6 +69,11 @@ fn find_or_tools(target: &str) -> anyhow::Result<PathBuf> {
         return Ok(PathBuf::from(
             custom_include_dir.expect("include dir should be set"),
         ));
+    } else if custom_lib_dir || custom_include_dir.is_some() {
+        println!(
+            "cargo::error='OR_TOOLS_LIB_DIR' and 'OR_TOOLS_INCLUDE_DIR' must be set together."
+        );
+        bail!("'OR_TOOLS_LIB_DIR' and 'OR_TOOLS_INCLUDE_DIR' must be set together.");
     }
 
     if target.ends_with("-apple-darwin") {
