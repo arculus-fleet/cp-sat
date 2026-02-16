@@ -87,6 +87,7 @@ fn find_or_tools(target: &str) -> anyhow::Result<PathBuf> {
                 if let Some(include_dir) = find_or_tools_homebrew()
                     .context("Failed to check if homebrew libortools directory exists")?
                 {
+                    println!("cargo:rustc-link-search=/opt/homebrew/lib");
                     return Ok(include_dir);
                 }
             }
